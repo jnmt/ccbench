@@ -62,6 +62,7 @@ public:
     bool is_forwarded_;
     bool has_write_ = false;
     bool has_insert_ = false;
+    bool scan_conflict_found_ = false; // insert_validation found a scanner covering an inserted key
     bool occ_guard_required_ = false;
     uint8_t thid_ = 0;
 
@@ -145,6 +146,18 @@ public:
 #if ADD_ANALYSIS
         result_->local_backoff_latency_ += rdtscp() - start;
 #endif
+    }
+
+    // true if every version in the read set was written by the same transaction
+    // (trivially true for an empty read set)
+    bool read_set_single_writer() {
+        auto itr = read_set_.begin();
+        if (itr == read_set_.end()) return true;
+        const TxID writer = itr->txid_;
+        for (++itr; itr != read_set_.end(); ++itr) {
+            if (itr->txid_ != writer) return false;
+        }
+        return true;
     }
 
     Version *newVersionGeneration([[maybe_unused]] Tuple *tuple) {

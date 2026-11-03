@@ -50,6 +50,8 @@ DEFINE_bool(forwarding, true, "Enable order forwarding.");
 DEFINE_uint64(validation_threshold, 100, "Threshold of pages for parallel validation.");
 DEFINE_uint64(validation_th_num, 1, "Number of validation threads.");
 DEFINE_uint64(cc_mode, DEFAULT_CC_MODE, "Initial concurrency control mode.");
+DEFINE_bool(insert_only_opt, true, "Skip read validation for an insert-only transaction when all the versions it read were written by a single transaction.");
+DEFINE_bool(insert_only_mixed_abort, true, "Abort an insert-only transaction when the versions it read were written by multiple transactions, instead of running the full validation.");
 #else
 DECLARE_uint64(clocks_per_us);
 DECLARE_uint64(extime);
@@ -66,9 +68,15 @@ DECLARE_bool(forwarding);
 DECLARE_uint64(validation_threshold);
 DECLARE_uint64(validation_th_num);
 DECLARE_uint64(cc_mode);
+DECLARE_bool(insert_only_opt);
+DECLARE_bool(insert_only_mixed_abort);
 #endif
 
 GLOBAL uint64_t TotalThreadNum;
+GLOBAL std::atomic<uint64_t> InsertOnlySkips;        // read validation skipped
+GLOBAL std::atomic<uint64_t> InsertOnlyMixedAborts;  // aborted due to mixed writers
+GLOBAL std::atomic<uint64_t> InsertOnlyMixedFulls;   // mixed writers, fell back to full validation
+GLOBAL std::atomic<uint64_t> InsertOnlyScanFalls;    // a scanner may read the inserts, fell back to full validation
 
 alignas(CACHE_LINE_SIZE) GLOBAL Tuple *Table;
 alignas(CACHE_LINE_SIZE) GLOBAL ThreadManagementEntry **ThManagementTable;

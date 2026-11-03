@@ -115,6 +115,12 @@ int main(int argc, char *argv[]) try {
   OzeResult[0].displayAllResult(FLAGS_clocks_per_us, FLAGS_extime, TotalThreadNum);
   std::cout << "Details per transaction type:" << std::endl;
   OzeResult[0].displayPerTxResult(TxTypes);
+  if (FLAGS_insert_only_opt) {
+    std::cout << "insert_only_skips:\t" << InsertOnlySkips.load() << std::endl;
+    std::cout << "insert_only_mixed_aborts:\t" << InsertOnlyMixedAborts.load() << std::endl;
+    std::cout << "insert_only_mixed_fulls:\t" << InsertOnlyMixedFulls.load() << std::endl;
+    std::cout << "insert_only_scan_falls:\t" << InsertOnlyScanFalls.load() << std::endl;
+  }
 
   return 0;
 } catch (bad_alloc) {

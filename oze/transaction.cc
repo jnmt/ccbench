@@ -45,9 +45,10 @@ void TxExecutor::begin() {
     ThManagementTable[thid_]->atomicStoreMode(this->cc_mode_);
     this->occ_guard_required_ = some_threads_in(OCC_MODE|TO_OCC_MODE);
 
-    // reset a flag for insert-only optimization
+    // reset flags for insert-only optimization
     this->has_write_ = false;
     this->has_insert_ = false;
+    this->scan_conflict_found_ = false;
 
     // just for statistics
     this->is_forwarded_ = false;
@@ -569,6 +570,9 @@ bool TxExecutor::validation() {
     KeySet finished_set;
     KeySet propagate_set;
 
+    // declared here since the gotos below must not bypass its initialization
+    bool insert_only = FLAGS_insert_only_opt && !has_write_ && has_insert_;
+
     this->graph_.emplace(this->txid_, TxNode(this->txid_));
     this->graph_.at(this->txid_).status_ = TransactionStatus::validating;
 
@@ -592,13 +596,28 @@ bool TxExecutor::validation() {
     }
 
     // insert-only optimization
-    if (!has_write_ && has_insert_) {
-      for (auto& we : this->write_set_) {
-        if (!insert_validation(we))
-          goto ABORT_VALIDATION;
-        finished_set.insert(we.rcdptr_);
-      }
-      goto FINISH_VALIDATION;
+    //
+    // An insert-only transaction whose inserted records are read by nobody
+    // has only two kinds of edges: wr edges from the writers of the versions
+    // it read, and rw edges to the writers of newer versions of those records.
+    // If all the versions it read were written by a single transaction L,
+    // every such newer writer W follows L in the version order (ww: L -> W),
+    // so the transaction can be serialized right after L. A cycle through it
+    // would imply a cycle through L and W without it. Thus we can skip merging
+    // the record-local graphs of the read set (and following the followers).
+    // When the writers are mixed, the view may be inconsistent (e.g., X from
+    // L and Y from L' that overwrote X), so we abort or fall back to the
+    // full validation.
+    // Note that this argument does not hold when several L1 instances run
+    // concurrently on the same factory in BoMB.
+    if (insert_only && !read_set_single_writer()) {
+        if (FLAGS_insert_only_mixed_abort) {
+            InsertOnlyMixedAborts.fetch_add(1, std::memory_order_relaxed);
+            this->status_ = TransactionStatus::aborted;
+            goto ABORT_VALIDATION;
+        }
+        InsertOnlyMixedFulls.fetch_add(1, std::memory_order_relaxed);
+        insert_only = false;
     }
 
     for (auto& we : this->write_set_) {
@@ -614,6 +633,16 @@ bool TxExecutor::validation() {
             this->status_ = TransactionStatus::invalid;
             goto FINISH_VALIDATION;
         }
+    }
+
+    if (insert_only) {
+        if (!scan_conflict_found_) {
+            // all write-set entries were inserts and nobody scanned them
+            InsertOnlySkips.fetch_add(1, std::memory_order_relaxed);
+            goto FINISH_VALIDATION;
+        }
+        // a scanner may depend on our inserts; its edges need the full check
+        InsertOnlyScanFalls.fetch_add(1, std::memory_order_relaxed);
     }
 
     for (const auto& [tpl, _] : this->readSet_) {
@@ -864,6 +893,7 @@ bool TxExecutor::insert_validation(WriteElement<Tuple> element) {
         std::cout << "  Scan entry: " << tuple << std::endl;
 #endif
         if (entry->txid_ != txid_ && entry->contains(element.key_)) {
+            scan_conflict_found_ = true;
             // add edge; scanner to inserter
             if (auto it = this->graph_.find(entry->txid_); it == this->graph_.end())
                 this->graph_.emplace(entry->txid_, TxNode(entry->txid_));
