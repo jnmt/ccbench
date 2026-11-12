@@ -2,6 +2,8 @@
 
 [CCBench](https://github.com/thawk105/ccbench)[1] is a benchmark platform for various concurrency control protocols. This repository provides an extended version of CCBench, which supports additional workloads and protocols.
 
+This branch (`vldb-paper`) is the artifact of the Oze paper published in PVLDB [2]. It includes the Oze protocol and the BoMB workload used in the paper. See [Fixes to the Oze Artifact](#fixes-to-the-oze-artifact) for the issues fixed after the publication.
+
 ## Workloads
 
 An extended CCBench provides the following workloads.
@@ -119,6 +121,32 @@ $ ./cicada/ycsb_cicada.exe --thread-num 8 --ycsb-rratio 50
 
 See usage with the `--help` option for details of the workload-specific options.
 
+## Fixes to the Oze Artifact
+
+After the publication of the paper [2], we found and fixed the following
+issues in the artifact. The fixes are included in this branch; see the commit
+history for details.
+
+- **Insert-only optimization in Oze.** Oze skipped the read validation of a
+  transaction that only inserts records (e.g., S2 in BoMB), assuming that
+  nobody reads its inserts. However, the read set of such a transaction still
+  needs to be validated: when the versions it read were written by different
+  long transactions (e.g., S2 read a product cost written by L1 and another one
+  written by the next L1 that had also overwritten the former), the validation
+  could miss a cycle. The optimization is now applied only when all the
+  versions read were written by a single transaction and no concurrent scan
+  covers the inserted keys; otherwise, the transaction aborts (default) or
+  falls back to the full validation. Note that the optimization assumes that
+  at most one L1 runs on a factory at a time, which holds in BoMB.
+- **Obsolete products in BoMB.** S3 replaces a product manufactured in a
+  factory, but the row of the replaced product remained in the result-cost
+  table (`ProductCostMaster`). Thus, S2 kept issuing journal vouchers for a
+  product that was no longer manufactured, while L1 no longer updated its cost.
+  L1 now marks such rows as obsolete, and S2 skips them.
+
+We have confirmed with the main BoMB experiments that these fixes do not
+affect the results and conclusions reported in the paper.
+
 ## References
 
 ```
@@ -126,4 +154,8 @@ See usage with the `--help` option for details of the workload-specific options.
     An analysis of concurrency control protocols for in-memory databases with CCBench.
     Proc. VLDB Endow. 13, 13 (September 2020), 3531–3544.
     https://doi.org/10.14778/3424573.3424575
+[2] Jun Nemoto, Takashi Kambayashi, Takashi Hoshino, and Hideyuki Kawashima. 2025.
+    Oze: Decentralized Graph-based Concurrency Control for Long-running Update Transactions.
+    Proc. VLDB Endow. 18, 8 (2025), 2321–2333.
+    https://doi.org/10.14778/3742728.3742730
 ```
